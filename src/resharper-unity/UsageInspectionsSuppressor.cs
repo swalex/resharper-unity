@@ -15,7 +15,7 @@ namespace JetBrains.ReSharper.Plugins.Unity
             var cls = element as IClass;
             if (cls != null)
             {
-                if(MonoBehaviourUtil.IsMonoBehaviourType(cls, cls.Module))
+                if(cls.IsMessageHost())
                 {
                     flags = ImplicitUseKindFlags.InstantiatedNoFixedConstructorSignature;
                     return true;
@@ -23,14 +23,10 @@ namespace JetBrains.ReSharper.Plugins.Unity
             }
 
             var method = element as IMethod;
-            if (method != null && MonoBehaviourUtil.IsEventHandler(method.ShortName))
+            if (method != null && method.IsMessage())
             {
-                var containingType = method.GetContainingType();
-                if (containingType != null && MonoBehaviourUtil.IsMonoBehaviourType(containingType, method.Module))
-                {
-                    flags = ImplicitUseKindFlags.Access;
-                    return true;
-                }
+                flags = ImplicitUseKindFlags.Access;
+                return true;
             }
 
             var field = element as IField;

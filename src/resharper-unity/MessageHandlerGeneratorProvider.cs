@@ -1,18 +1,22 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using JetBrains.Annotations;
 using JetBrains.Application.DataContext;
 using JetBrains.Application.Progress;
+using JetBrains.ReSharper.Feature.Services.Bulbs;
+using JetBrains.ReSharper.Feature.Services.CSharp.Bulbs;
 using JetBrains.ReSharper.Feature.Services.CSharp.Generate;
 using JetBrains.ReSharper.Feature.Services.Generate;
 using JetBrains.ReSharper.Feature.Services.Generate.Actions;
 using JetBrains.ReSharper.Feature.Services.Generate.Workflows;
+using JetBrains.ReSharper.Feature.Services.Intentions;
 using JetBrains.ReSharper.Psi;
 using JetBrains.ReSharper.Psi.CodeStyle;
 using JetBrains.ReSharper.Psi.CSharp;
 using JetBrains.ReSharper.Psi.CSharp.Tree;
+using JetBrains.ReSharper.Psi.JavaScript.Tree;
 using JetBrains.ReSharper.Psi.Resolve;
+using JetBrains.UI.Icons;
+using JetBrains.Util;
 
 namespace JetBrains.ReSharper.Plugins.Unity
 {
@@ -32,7 +36,7 @@ namespace JetBrains.ReSharper.Plugins.Unity
 
     public class GenerateMonoBehaviourMethodsWorkflow : GenerateCodeWorkflowBase
     {
-        public GenerateMonoBehaviourMethodsWorkflow() : base(GeneratorUnityKinds.UnityMessages, null, "MonoBehaviour event handlers", GenerateActionGroup.CLR_LANGUAGE, "Event handlers", "", "Generate.MonoBehaviour")
+        public GenerateMonoBehaviourMethodsWorkflow() : base(GeneratorUnityKinds.UnityMessages, ResharperUnityThemedIcons.Message16xMD.Id, "Unity3D Messages", GenerateActionGroup.CLR_LANGUAGE, "Unity3D Messages", "", "Generate.MonoBehaviour")
         {
         }
 
@@ -60,7 +64,7 @@ namespace JetBrains.ReSharper.Plugins.Unity
             if (typeElement == null)
                 return;
 
-            if (!MonoBehaviourUtil.IsMonoBehaviourType(typeElement, context.PsiModule))
+            if (!typeElement.IsMessageHost())
                 return;
             var selectedMethods = context.InputElements.OfType<GeneratorDeclaredElement<IMethod>>();
             var factory = CSharpElementFactory.GetInstance(context.ClassDeclaration);
@@ -69,7 +73,7 @@ namespace JetBrains.ReSharper.Plugins.Unity
                 ISubstitution newSubstitution;
                 var method = (IMethodDeclaration) CSharpGenerateUtil.CreateMemberDeclaration(
                     context.ClassDeclaration, selectedMethod.Substitution, selectedMethod.DeclaredElement, false, out newSubstitution);
-                method.SetBody(factory.CreateEmptyBlock());
+                method.SetBody(method.Type.IsVoid() ? factory.CreateEmptyBlock() : factory.CreateBlock("{return null;}"));
                 method.FormatNode();
                 context.PutMemberDeclaration(method);
             }
@@ -85,49 +89,19 @@ namespace JetBrains.ReSharper.Plugins.Unity
             if (typeElement == null)
                 return;
 
-            if (!MonoBehaviourUtil.IsMonoBehaviourType(typeElement, context.PsiModule))
-                return;
+            MessageHost[] hosts = typeElement.GetMessageHosts().ToArray();
+            MonoBehaviourEvent[] events = hosts.SelectMany(h => h.Messages)
+                .Where(m => !typeElement.Methods.Any(m.Match)).ToArray();
 
-            var existingEventNames = typeElement.Methods.Select(m => m.ShortName).ToHashSet();
-            var missingEvents = MonoBehaviourUtil.Events.Where(e => !existingEventNames.Contains(e.Name));
-
-            var factory = CSharpElementFactory.GetInstance(context.ClassDeclaration);
-
-            foreach (var missingEvent in missingEvents)
-            {
-                var method = CreateDeclaration(missingEvent, factory, context.ClassDeclaration).DeclaredElement;
-                if (method != null)
-                    context.ProvidedElements.Add(new GeneratorDeclaredElement<IMethod>(method));
-            }
-        }
-        
-        [NotNull]
-        private IMethodDeclaration CreateDeclaration([NotNull] MonoBehaviourEvent monoBehaviourEvent, [NotNull] CSharpElementFactory elementFactory, [NotNull] IClassLikeDeclaration context)
-        {
-            var builder = new StringBuilder(128);
-
-            builder.Append("void ");
-            builder.Append(monoBehaviourEvent.Name);
-            builder.Append("(");
-
-            for (int i = 0; i < monoBehaviourEvent.Parameters.Length; i++)
-            {
-                if (i > 0)
-                    builder.Append(",");
-                var parameter = monoBehaviourEvent.Parameters[i];
-                builder.Append(parameter.ClrTypeName.FullName);
-                if (parameter.IsArray)
-                    builder.Append("[]");
-                builder.Append(' ');
-                builder.Append(parameter.Name);
-            }
-
-            builder.Append(");");
-
-            var declaration = (IMethodDeclaration) elementFactory.CreateTypeMemberDeclaration(builder.ToString());
-            declaration.SetResolveContextForSandBox(context, SandBoxContextType.Child);
-            declaration.FormatNode();
-            return declaration;
+            IClassLikeDeclaration classDeclaration = context.ClassDeclaration;
+            CSharpElementFactory factory = CSharpElementFactory.GetInstance(classDeclaration);
+            IEnumerable<IMethod> methods = events
+                .Select(e => e.CreateDeclaration(factory, classDeclaration))
+                .Select(d => d.DeclaredElement)
+                .Where(m => m != null);
+            IEnumerable<IGeneratorElement> elements =
+                methods.Select(m => new GeneratorDeclaredElement<IMethod>(m));
+            context.ProvidedElements.AddRange(elements);
         }
 
         public override double Priority => 100;
